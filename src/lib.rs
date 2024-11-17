@@ -1,9 +1,4 @@
 use std::time::Duration;
-
-// [Enttec]: https://www.enttec.com/product/lighting-communication-protocols/dmx512/open-dmx-usb
-// [Enttec Open DMX USB]: https://www.enttec.com/product/lighting-communication-protocols/dmx512/open-dmx-usb
-// [libftd2xx]: https://crates.io/crates/libftd2xx
-
 use libftd2xx::{num_devices, DeviceInfo, DeviceStatus, Ftdi, FtdiCommon, StopBits};
 
 const BUFFER_SIZE: usize = 513;
