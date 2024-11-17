@@ -1,0 +1,11 @@
+[package]
+name = "open_dmx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+
+[dependencies.libftd2xx]
+version = "*"
+features = ["static"]
