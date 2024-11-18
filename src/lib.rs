@@ -15,6 +15,8 @@ pub struct OpenDMX {
 
     read_time_out: Duration,
     write_time_out: Duration,
+
+    dirty : bool,  // Set to true each time the local buffer has changed and to false once we wrote all our data to the connected device.
 }
 
 impl OpenDMX {
@@ -49,6 +51,7 @@ impl OpenDMX {
             read_time_out: Duration::from_millis(1000),
             write_time_out: Duration::from_millis(1000),
             parity_none: libftd2xx::Parity::No,
+            dirty: false,
         })
     }
 
@@ -111,6 +114,7 @@ impl OpenDMX {
             return Err("Invalid channel number".to_owned());
         }
         self.buffer[channel] = value;
+        self.dirty = true;
 
         Ok(())
     }
@@ -132,6 +136,8 @@ impl OpenDMX {
         for (dst, src) in self.buffer.iter_mut().zip(&data) {
             *dst = *src
         }
+
+        self.dirty = false;
 
         Ok(())
     }
@@ -193,7 +199,12 @@ impl OpenDMX {
     }
 
     /// Write local buffer to device.
-    pub fn write(&mut self) -> Result<(), String> {
+    /// This object keeps whether its internal state has changed or not and will only update device data
+    /// if the local buffer has changed since the last write action. 
+    /// If you want to overwrite the device status regardless of the internal state set 'force' to true. 
+    pub fn write(&mut self, force : bool) -> Result<(), String> {
+        if !self.dirty && !force{ return Ok(()); }
+
         match self.ftdi.set_break_on() {
             Ok(_) => { },
             Err(e) => {
@@ -209,7 +220,10 @@ impl OpenDMX {
         }
 
         match self.ftdi.write_all(&self.buffer) {
-            Ok(_) => { Ok(()) },
+            Ok(_) => {
+                self.dirty = false;
+                Ok(()) 
+            },
             Err(e) => {
                 return Err(format!("Could not write data to device. Error: {}", e));
             },
@@ -342,7 +356,7 @@ mod tests {
         subject.set_dmx_value(2, g).unwrap();
         subject.set_dmx_value(3, b).unwrap();
 
-        subject.write().unwrap();
+        subject.write(true).unwrap();
 
         // Reset the buffer...
         subject.reset_buffer();
