@@ -1,4 +1,4 @@
-use libftd2xx::{num_devices, DeviceInfo, DeviceStatus, Ftdi, FtdiCommon, StopBits};
+use libftd2xx::{list_devices, num_devices, DeviceInfo, DeviceStatus, Ftdi, FtdiCommon, StopBits};
 use std::{
     sync::mpsc::{self, Receiver, Sender},
     thread,
@@ -17,17 +17,21 @@ pub enum TimerGranularity {
     Bad,
 }
 
-/// Commands that are being send to the dmx device across multiple threads.
+/// Commands that are being send to or from the dmx device across multiple threads.
 #[derive(Debug)]
 pub enum OpenDmxProtocol {
-    /// change channel x to value y
+    /// Send to the device. Changes the channel x to value y
     SetValue(usize, u8),
-    /// Stop the update thread. This will free the device as well.
+    /// Send to device. Stop the thread. This will free the device as well.
     Stop,
-    /// Reset the device.
+    /// Send to device. Reset the device.
     Reset,
-    /// Set the entire buffer to zero
+    /// Send to device. Set the entire buffer to zero
     ResetBuffer,
+    /// Send to device. Lists all available devices.
+    ListDevices,
+    /// Returned from device. A list of all available devices.
+    DeviceList(Vec<DeviceInfo>),
 }
 
 pub struct OpenDMX {
@@ -212,6 +216,45 @@ impl OpenDMX {
         }
     }
 
+    pub fn list_devices() -> Result<Vec<DeviceInfo>, String> {
+        match list_devices() {
+            Ok(l) => Ok(l),
+            Err(e) => match e {
+                libftd2xx::FtStatus::INVALID_HANDLE => Err("INVALID_HANDLE".to_string()),
+                libftd2xx::FtStatus::DEVICE_NOT_FOUND => Err("DEVICE_NOT_FOUND".to_string()),
+                libftd2xx::FtStatus::DEVICE_NOT_OPENED => Err("DEVICE_NOT_OPENED".to_string()),
+                libftd2xx::FtStatus::IO_ERROR => Err("IO_ERROR".to_string()),
+                libftd2xx::FtStatus::INSUFFICIENT_RESOURCES => {
+                    Err("INSUFFICIENT_RESOURCES".to_string())
+                }
+                libftd2xx::FtStatus::INVALID_PARAMETER => Err("INVALID_PARAMETER".to_string()),
+                libftd2xx::FtStatus::INVALID_BAUD_RATE => Err("INVALID_BAUD_RATE".to_string()),
+                libftd2xx::FtStatus::DEVICE_NOT_OPENED_FOR_ERASE => {
+                    Err("DEVICE_NOT_OPENED_FOR_ERASE".to_string())
+                }
+                libftd2xx::FtStatus::DEVICE_NOT_OPENED_FOR_WRITE => {
+                    Err("DEVICE_NOT_OPENED_FOR_WRITE".to_string())
+                }
+                libftd2xx::FtStatus::FAILED_TO_WRITE_DEVICE => {
+                    Err("FAILED_TO_WRITE_DEVICE".to_string())
+                }
+                libftd2xx::FtStatus::EEPROM_READ_FAILED => Err("EEPROM_READ_FAILED".to_string()),
+                libftd2xx::FtStatus::EEPROM_WRITE_FAILED => Err("EEPROM_WRITE_FAILED".to_string()),
+                libftd2xx::FtStatus::EEPROM_ERASE_FAILED => Err("EEPROM_ERASE_FAILED".to_string()),
+                libftd2xx::FtStatus::EEPROM_NOT_PRESENT => Err("EEPROM_NOT_PRESENT".to_string()),
+                libftd2xx::FtStatus::EEPROM_NOT_PROGRAMMED => {
+                    Err("EEPROM_NOT_PROGRAMMED".to_string())
+                }
+                libftd2xx::FtStatus::INVALID_ARGS => Err("INVALID_ARGS".to_string()),
+                libftd2xx::FtStatus::NOT_SUPPORTED => Err("NOT_SUPPORTED".to_string()),
+                libftd2xx::FtStatus::OTHER_ERROR => Err("OTHER_ERROR".to_string()),
+                libftd2xx::FtStatus::DEVICE_LIST_NOT_READY => {
+                    Err("DEVICE_LIST_NOT_READY".to_string())
+                }
+            },
+        }
+    }
+
     /// Retrieve data about the current device.
     pub fn get_device_info(&self) -> &DeviceInfo {
         &self.info
@@ -300,10 +343,14 @@ impl OpenDMX {
     /// This is a port of the implementation in QLC+. See:
     /// https://github.com/mcallegari/qlcplus/blob/master/plugins/dmxusb/src/enttecdmxusbopen.cpp
     ///
-    pub fn run(id: i32) -> Sender<OpenDmxProtocol> {
+    pub fn run(id: i32) -> (Sender<OpenDmxProtocol>, Receiver<OpenDmxProtocol>) {
         let sender: Sender<OpenDmxProtocol>;
         let receiver: Receiver<OpenDmxProtocol>;
         (sender, receiver) = mpsc::channel();
+
+        let sender2: Sender<OpenDmxProtocol>;
+        let receiver2: Receiver<OpenDmxProtocol>;
+        (sender2, receiver2) = mpsc::channel();
 
         thread::spawn(move || {
             // Wait for device to settle, in case the device was opened just recently.
@@ -338,22 +385,33 @@ impl OpenDMX {
                                 Err(_) => {}
                             }
                         }
-                        
                         OpenDmxProtocol::Stop => {
                             running = false;
                             continue;
                         }
-
                         OpenDmxProtocol::Reset => match device.reset() {
                             Ok(_) => {}
                             Err(_) => {
                                 println!("Error resetting a DMX-Device.")
                             }
                         },
-
                         OpenDmxProtocol::ResetBuffer => {
-                            device.reset_buffer();                            
-                        },
+                            device.reset_buffer();
+                        }
+                        OpenDmxProtocol::ListDevices => {
+                            let mut payload = OpenDmxProtocol::DeviceList(Vec::new());
+                            if let Ok(list) = Self::list_devices() {
+                                payload = OpenDmxProtocol::DeviceList(list);
+                            }
+
+                            match sender2.send(payload) {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    println!("Could not send a list devices response.")
+                                }
+                            }
+                        }
+                        OpenDmxProtocol::DeviceList(_device_infos) => {}
                     }
                 }
 
@@ -389,7 +447,7 @@ impl OpenDMX {
             }
         });
 
-        sender
+        (sender, receiver2)
     }
 }
 
@@ -537,14 +595,14 @@ mod tests {
     pub fn run_test() {
         let sender = OpenDMX::run(0);
 
-        match sender.send(OpenDmxProtocol::SetValue(2, 5 as u8)) {
+        match sender.0.send(OpenDmxProtocol::SetValue(2, 5 as u8)) {
             Ok(_) => {}
             Err(e) => {
                 println!("Could not send data: {:?}", e);
             }
         }
 
-        match sender.send(OpenDmxProtocol::SetValue(3, 5 as u8)) {
+        match sender.0.send(OpenDmxProtocol::SetValue(3, 5 as u8)) {
             Ok(_) => {}
             Err(e) => {
                 println!("Could not send data: {:?}", e);
@@ -552,7 +610,7 @@ mod tests {
         }
 
         for i in 1..255 {
-            match sender.send(OpenDmxProtocol::SetValue(1, i as u8)) {
+            match sender.0.send(OpenDmxProtocol::SetValue(1, i as u8)) {
                 Ok(_) => {}
                 Err(e) => {
                     println!("Could not send data: {:?}", e);
@@ -564,7 +622,7 @@ mod tests {
 
         thread::sleep(Duration::from_millis(1000));
 
-        match sender.send(OpenDmxProtocol::Stop) {
+        match sender.0.send(OpenDmxProtocol::Stop) {
             Ok(_) => {}
             Err(e) => {
                 println!("Could not send stop: {:?}", e);
