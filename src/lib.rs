@@ -539,7 +539,7 @@ mod tests {
         let _subject2 = OpenDMX::new(0).unwrap();
     }
 
-    /// This test might fail with different version of open_dmx hardware.
+    /// This test might fail with different types of open_dmx hardware.
     #[test]
     pub fn device_info_test() {
         let mut subject = OpenDMX::new(0).unwrap();
@@ -550,6 +550,31 @@ mod tests {
         assert_eq!("FT232R USB UART".to_owned(), info.description);
         assert_eq!("AL05O9B5".to_owned(), info.serial_number);
         assert_eq!(DeviceType::FT232R, info.device_type);
+    }
+
+    /// This test might fail with different types of open_dmx hardware.
+    #[test]
+    pub fn async_list_devices() {
+        let (sender, receiver) = OpenDMX::run(0);
+        sender.send(OpenDmxProtocol::ListDevices).unwrap();
+        while let Ok(cmd) = receiver.try_recv() {
+            match cmd {
+                OpenDmxProtocol::DeviceList(device_infos) => {
+                    assert!(device_infos.len() == 1);
+                    assert!(device_infos[0].port_open);
+                },
+                _ => {
+                    panic!("Expected a device list only.")
+                }
+            }
+        }
+
+        // Wait for the device to clear its queue.
+        thread::sleep(Duration::from_millis(1000));
+        sender.send(OpenDmxProtocol::Stop).unwrap();
+
+        // And wait again so the device is properly shut down.
+        thread::sleep(Duration::from_millis(100));
     }
 
     #[test]
@@ -611,6 +636,20 @@ mod tests {
 
         for i in 1..255 {
             match sender.0.send(OpenDmxProtocol::SetValue(1, i as u8)) {
+                Ok(_) => {}
+                Err(e) => {
+                    println!("Could not send data: {:?}", e);
+                }
+            }
+
+            match sender.0.send(OpenDmxProtocol::SetValue(2, 255 - i as u8)) {
+                Ok(_) => {}
+                Err(e) => {
+                    println!("Could not send data: {:?}", e);
+                }
+            }
+
+            match sender.0.send(OpenDmxProtocol::SetValue(3, 255 - i as u8)) {
                 Ok(_) => {}
                 Err(e) => {
                     println!("Could not send data: {:?}", e);
