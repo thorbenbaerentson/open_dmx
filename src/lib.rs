@@ -1,15 +1,19 @@
-use std::{sync::mpsc::{self, Receiver, Sender}, thread, time::{Duration, Instant}};
 use libftd2xx::{num_devices, DeviceInfo, DeviceStatus, Ftdi, FtdiCommon, StopBits};
+use std::{
+    sync::mpsc::{self, Receiver, Sender},
+    thread,
+    time::{Duration, Instant},
+};
 
-const BUFFER_SIZE : usize = 513;
-const DMX_BREAK : u64 = 110;
-const DMX_MAB : u64 = 16;
+const BUFFER_SIZE: usize = 513;
+const DMX_BREAK: u64 = 110;
+const DMX_MAB: u64 = 16;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TimerGranularity {
     #[default]
     Unknown,
-    Good, 
+    Good,
     Bad,
 }
 
@@ -17,9 +21,13 @@ pub enum TimerGranularity {
 #[derive(Debug)]
 pub enum OpenDmxProtocol {
     /// change channel x to value y
-    SetValue(usize, u8),        
+    SetValue(usize, u8),
     /// Stop the update thread. This will free the device as well.
     Stop,
+    /// Reset the device.
+    Reset,
+    /// Set the entire buffer to zero
+    ResetBuffer,
 }
 
 pub struct OpenDMX {
@@ -34,12 +42,12 @@ pub struct OpenDMX {
 
     /// Time out for read operations
     read_time_out: Duration,
-    
+
     /// Time out for write operations.
     write_time_out: Duration,
 
-    /// Defaults to 40000 however this might cause flickering in some settings so users should be able to adjust this value. 
-    update_frequency : u32,
+    /// Defaults to 40000 however this might cause flickering in some settings so users should be able to adjust this value.
+    update_frequency: u32,
 }
 
 impl OpenDMX {
@@ -173,12 +181,14 @@ impl OpenDMX {
 
     /// Read current device status.
     pub fn read(&mut self) -> Result<Vec<u8>, String> {
-        let size : usize;
+        let size: usize;
         match self.ftdi.queue_status() {
-            Ok(s) => { size = s; },
+            Ok(s) => {
+                size = s;
+            }
             Err(e) => {
                 return Err(format!("Could read queue status. Error: {}", e));
-            },
+            }
         }
 
         let mut buf: [u8; 4096] = [0; 4096];
@@ -186,10 +196,8 @@ impl OpenDMX {
             Ok(_) => {
                 let r: Vec<u8> = buf.into();
                 Ok(r)
-            },
-            Err(e) => {
-                Err(format!("Could read device data. Error: {}", e))
-            },
+            }
+            Err(e) => Err(format!("Could read device data. Error: {}", e)),
         }
     }
 
@@ -209,16 +217,16 @@ impl OpenDMX {
         &self.info
     }
 
-    pub fn set_break(&mut self, on : bool) -> bool {
+    pub fn set_break(&mut self, on: bool) -> bool {
         if on {
             match self.ftdi.set_break_on() {
-                Ok(_) => { true },
-                Err(_) => { false },
+                Ok(_) => true,
+                Err(_) => false,
             }
         } else {
             match self.ftdi.set_break_off() {
-                Ok(_) => { true },
-                Err(_) => { false },
+                Ok(_) => true,
+                Err(_) => false,
             }
         }
     }
@@ -235,75 +243,73 @@ impl OpenDMX {
 
     /// Write local buffer to device.
     /// This object keeps whether its internal state has changed or not and will only update device data
-    /// if the local buffer has changed since the last write action. 
-    /// If you want to overwrite the device status regardless of the internal state set 'force' to true. 
+    /// if the local buffer has changed since the last write action.
+    /// If you want to overwrite the device status regardless of the internal state set 'force' to true.
     pub fn write(&mut self) -> Result<(), String> {
         match self.ftdi.set_break_on() {
-            Ok(_) => { },
+            Ok(_) => {}
             Err(e) => {
                 return Err(format!("Could not set device break on. Error: {}", e));
-            },
+            }
         }
 
         match self.ftdi.set_break_off() {
-            Ok(_) => { },
+            Ok(_) => {}
             Err(e) => {
                 return Err(format!("Could not set device break off. Error: {}", e));
-            },
+            }
         }
 
         match self.ftdi.write_all(&self.buffer) {
-            Ok(_) => {
-                Ok(()) 
-            },
+            Ok(_) => Ok(()),
             Err(e) => {
                 return Err(format!("Could not write data to device. Error: {}", e));
-            },
+            }
         }
     }
 
-    /// Reset the buffer to zero 
+    /// Reset the buffer to zero
     pub fn reset_buffer(&mut self) {
         self.buffer = [0; BUFFER_SIZE];
     }
 
-    fn framesleep(timer : &Instant, frame_time : u128, granularity : TimerGranularity) {
+    fn framesleep(timer: &Instant, frame_time: u128, granularity: TimerGranularity) {
         match granularity {
             TimerGranularity::Unknown => {
                 while timer.elapsed().as_millis() < frame_time {
                     // Busy wait
                 }
-            },
+            }
             TimerGranularity::Good => {
                 while timer.elapsed().as_millis() < frame_time {
                     thread::sleep(Duration::from_millis(1));
                 }
-            },
+            }
             TimerGranularity::Bad => {
                 while timer.elapsed().as_millis() < frame_time {
                     // Busy wait
                 }
-            },
+            }
         }
     }
 
     /// Create and initialize a new open dmx module with the given id.
     /// This method also starts a new thread to continuously update the device.
     /// The device is beeing controlled using the returned Sender instance.
-    /// 
+    ///
     /// This is a port of the implementation in QLC+. See:
     /// https://github.com/mcallegari/qlcplus/blob/master/plugins/dmxusb/src/enttecdmxusbopen.cpp
-    /// 
-    pub fn run(id : i32) -> Sender<OpenDmxProtocol> {
-        let sender : Sender<OpenDmxProtocol>;
-        let receiver : Receiver<OpenDmxProtocol>;
+    ///
+    pub fn run(id: i32) -> Sender<OpenDmxProtocol> {
+        let sender: Sender<OpenDmxProtocol>;
+        let receiver: Receiver<OpenDmxProtocol>;
         (sender, receiver) = mpsc::channel();
 
-        thread::spawn(move|| {
+        thread::spawn(move || {
             // Wait for device to settle, in case the device was opened just recently.
-            // Also measure, whether timer granularity is OK
+            // Also, measure whether timer granularity is OK
             let mut now = Instant::now();
-            
+
             let mut running = true;
             let mut device = OpenDMX::new(id).unwrap();
             thread::sleep(Duration::from_millis(1000));
@@ -319,7 +325,8 @@ impl OpenDMX {
             device.reset().unwrap();
 
             // The DMX frame time duration in microseconds.
-            let frame_time : u128 = (((1000.0 / (device.update_frequency / 1000) as f64) + 0.5).floor()) as u128;
+            let frame_time: u128 =
+                (((1000.0 / (device.update_frequency / 1000) as f64) + 0.5).floor()) as u128;
 
             while running {
                 // Receive all incomming commands and update our buffer
@@ -327,14 +334,25 @@ impl OpenDMX {
                     match cmd {
                         OpenDmxProtocol::SetValue(channel, value) => {
                             match device.set_dmx_value(channel, value) {
-                                Ok(_) => { },
-                                Err(_) => { },
+                                Ok(_) => {}
+                                Err(_) => {}
+                            }
+                        }
+                        
+                        OpenDmxProtocol::Stop => {
+                            running = false;
+                            continue;
+                        }
+
+                        OpenDmxProtocol::Reset => match device.reset() {
+                            Ok(_) => {}
+                            Err(_) => {
+                                println!("Error resetting a DMX-Device.")
                             }
                         },
 
-                        OpenDmxProtocol::Stop => { 
-                            running = false;
-                            continue; 
+                        OpenDmxProtocol::ResetBuffer => {
+                            device.reset_buffer();                            
                         },
                     }
                 }
@@ -358,11 +376,12 @@ impl OpenDMX {
                 if granularity == TimerGranularity::Good {
                     thread::sleep(Duration::from_micros(DMX_MAB));
                 }
-                
+
                 match device.write() {
                     Ok(_) => {
                         Self::framesleep(&now, frame_time, granularity);
-                    },
+                    }
+
                     Err(_) => {
                         Self::framesleep(&now, frame_time, granularity);
                     }
@@ -377,6 +396,15 @@ impl OpenDMX {
 /// A device must be closed once it´s not used anymore. If not, the device will be blocked.
 impl Drop for OpenDMX {
     fn drop(&mut self) {
+        self.reset_buffer();
+
+        match self.write() {
+            Ok(_) => {}
+            Err(e) => {
+                println!("Could not reset device. Error: {}", e);
+            }
+        }
+
         match self.close() {
             Ok(_) => {}
             Err(e) => {
@@ -486,9 +514,9 @@ mod tests {
         subject.reset().unwrap();
 
         let pause = 100;
-        let r : u8 = 255;
-        let g : u8 = 10;
-        let b : u8 = 10;
+        let r: u8 = 255;
+        let g: u8 = 10;
+        let b: u8 = 10;
 
         subject.set_dmx_value(1, r).unwrap();
         subject.set_dmx_value(2, g).unwrap();
@@ -510,25 +538,25 @@ mod tests {
         let sender = OpenDMX::run(0);
 
         match sender.send(OpenDmxProtocol::SetValue(2, 5 as u8)) {
-            Ok(_) => { },
+            Ok(_) => {}
             Err(e) => {
                 println!("Could not send data: {:?}", e);
-            },
+            }
         }
 
         match sender.send(OpenDmxProtocol::SetValue(3, 5 as u8)) {
-            Ok(_) => { },
+            Ok(_) => {}
             Err(e) => {
                 println!("Could not send data: {:?}", e);
-            },
+            }
         }
 
-        for i in 1 .. 255 {
+        for i in 1..255 {
             match sender.send(OpenDmxProtocol::SetValue(1, i as u8)) {
-                Ok(_) => { },
+                Ok(_) => {}
                 Err(e) => {
                     println!("Could not send data: {:?}", e);
-                },
+                }
             }
 
             thread::sleep(Duration::from_millis(10));
@@ -537,10 +565,10 @@ mod tests {
         thread::sleep(Duration::from_millis(1000));
 
         match sender.send(OpenDmxProtocol::Stop) {
-            Ok(_) => { },
+            Ok(_) => {}
             Err(e) => {
                 println!("Could not send stop: {:?}", e);
-            },
+            }
         }
 
         thread::sleep(Duration::from_millis(100));
