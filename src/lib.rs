@@ -549,7 +549,7 @@ mod tests {
         let info = subject.get_device_info();
         assert_eq!("FT232R USB UART".to_owned(), info.description);
         assert_eq!("AL05O9B5".to_owned(), info.serial_number);
-        assert_eq!(DeviceType::FT232R, info.device_type);
+        assert_eq!(DeviceType::FT232R, info.device_type);       // This is hardware specific!
     }
 
     /// This test might fail with different types of open_dmx hardware.
@@ -562,6 +562,7 @@ mod tests {
                 OpenDmxProtocol::DeviceList(device_infos) => {
                     assert!(device_infos.len() == 1);
                     assert!(device_infos[0].port_open);
+                    assert_eq!(device_infos[0].device_type, DeviceType::FT232R);    // This is hardware specific!
                 },
                 _ => {
                     panic!("Expected a device list only.")
