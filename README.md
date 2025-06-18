@@ -11,7 +11,7 @@ There are Unit-Test for this crate. However, these tests cannot be run in parall
 Furthermore keep in mind, that some of the test will fail if no or multiple devices are connected to your machine.
 
 ## Entry point
-Open DMX devices need continous updates and work on refresh rates of roughly 40 kHz. So a program has to refresh device state at a similar refresh rate. If a program does not write often enough to the device it will cause flickering, however too many writes is a waste of resources (like USB Bandwith). So this crate implements a function that starts a background thread and that writes to the device with a refresh rate taking that into account (the code is a port from [QLC+](https://github.com/mcallegari/qlcplus/blob/master/plugins/dmxusb/src/enttecdmxusbopen.cpp)).
+Open DMX devices need continous updates and works with a refresh rates of roughly 40 kHz. So a program has to refresh the device state at a similar refresh rate. If a program does not write often enough to the device it will cause flickering, however too many writes are a waste of resources (like USB Bandwith). So this crate implements a function that starts a background thread, that writes to the device continuosly (the code is a port from [QLC+](https://github.com/mcallegari/qlcplus/blob/master/plugins/dmxusb/src/enttecdmxusbopen.cpp)).
 
 In most cases you should start your device using the 'pub fn run(id : i32) -> Sender<OpenDmxProtocol>' method. It returns a sender struct, which can be used to update device values or stop the background thread (see: OpenDmxProtocol).
 
