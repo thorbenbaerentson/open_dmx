@@ -5,7 +5,7 @@ Open DMX is a rust implementation to control [Enttec Open DMX USB](https://www.e
 Make sure to install the [FTDI drivers](https://ftdichip.com/drivers/d2xx-drivers/). FTDI-Chips is what Enttec uses to build its devices.
 
 ## Tests
-There are Unit-Test for this crate. However, these tests cannot be run in parallel because the crate needs exclusive access to the device. So make sure to run unit test with appropriate parameters like:
+There are Unit-Test for this crate. However, these tests cannot be run in parallel because the driver needs exclusive access to the device. So make sure to run unit test with appropriate parameters like:
 `cargo test -- --test-threads=1`
 
 Furthermore keep in mind, that some of the test will fail if no or multiple devices are connected to your machine.
